@@ -27,6 +27,7 @@
 #include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include "../extracted code/unpv13e-master/unpv13e-master/lib/unp.h"
 
 #define MAX_NAME     32
 #define MAX_MSG      1024
@@ -39,6 +40,7 @@ typedef struct Job {
     int sender_fd;                  // The file descriptor (socket) of the client who sent the message
     char username[MAX_NAME];        // Username of the sender
     char msg[MAX_MSG];              // Raw message text sent by the client
+    int flag;                       // 0 = send to everyone, 1 = send back to sender only, 2 = send to everyone but sender
     struct Job *next;               // Pointer to the next Job in the queue (linked-list structure)
 } Job;
 
@@ -57,23 +59,207 @@ typedef struct Queue {
 
 static Queue job_queue, bcast_queue;
 
+typedef struct thread_arg {
+    Queue * job_queue;
+    Queue * bcast_queue;
+} thread_arg;
+
 /* ---------------- Queue Utilities ---------------- */
 static void q_init(Queue *q) {
-    //todo
+    q->head = calloc(1, sizeof(Job)); //dummy head node
+    q->tail = q->head;
 }
 static void q_close(Queue *q) {
-    //todo
+    q->closed = 1
 }
 static void q_push(Queue *q, Job *j) {
-    //todo
+    pthread_mutex_lock(&(q->mtx));
+    q->tail->next = j;
+    q->tail = q->tail->next;
+    pthread_mutex_unlock(&(q->mtx));
 }
 static Job *q_pop(Queue *q) {
-    //todo
+    pthread_mutex_lock(&(q->mtx));
+    Job * ret = q->head->next;
+    q->head->next = q->head->next->next;
+    pthread_mutex_unlock(&(q->mtx));
+    return ret;
 }
 
-
+void * worker(void * arg)
+{
+    Queue * job_queue = ((thread_arg *)arg)->job_queue;
+    Queue * bcast_queue = ((thread_arg *)arg)->bcast_queue;
+    for (;;)
+    {
+        if (job_queue->head->next == NULL)
+        {
+            continue;
+        }
+        else
+        {
+            Job * curr = q_pop(job_queue);
+            if (strncmp(curr->msg, "/who", 4) == 0)
+            {
+                curr->msg[0] = '\0'; //TODO: null message - when using broadcast, check for this and substitute list of client usernames
+                curr->flag = 1;
+            }
+            else if (strncmp(curr->msg, "/me", 3) == 0)
+            {
+                char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
+                snprintf(msg, sizeof(msg), "*%s%s*", curr->username, (curr->msg)+3);
+                memcpy(curr->msg, msg, strlen(msg)+1);
+            }
+            else if (strncmp(curr->msg, "/", 1) == 0) //bad command -> send private error message
+            {
+                char msg[MAX_MSG+1];
+                snprintf(msg, sizeof(msg), "Invalid command. Type /who, /me, or /quit.\n");
+                memcpy(curr->msg, msg, strlen(msg)+1);
+                curr->flag = 1;
+            }
+            else
+            {
+                char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
+                snprintf(msg, sizeof(msg), "%s: %s", curr->username, (curr->msg));
+                memcpy(curr->msg, msg, strlen(msg)+1);
+            }
+            q_push(bcast_queue, curr);
+        }
+    }
+}
 
 /* ---------------- Main ---------------- */
 int main(int argc, char **argv) {
-    //todo
+    if (argc != 4)
+    {
+        perror("Wrong number of clients. Usage is ./chatroom_server.out <port> <num_workers> <max_clients>");
+        exit(1);
+    }
+    int port = atoi(argv[1]);
+    int num_workers = atoi(argv[2]);
+    int max_clients = atoi(argv[3]);
+    
+    int listenfd = Socket(AF_INET, SOCK_STREAM, 0);
+
+    struct sockaddr_in servaddr, cliaddr;
+    bzero(&servaddr, sizeof(servaddr));
+	servaddr.sin_family      = AF_INET;
+	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	servaddr.sin_port        = htons(port);
+    Bind(listenfd, (SA *)servaddr, sizeof(servaddr));
+    Listen(listenfd, LISTENQ);
+
+    int maxfd, maxi;
+    int client[max_clients];
+    int client_buff[max_clients][INBUF]; // TODO: change this and below to dynamically allocate memory when needed for space saving
+    int client_names[max_clients][MAX_NAME];
+    int i;
+    char buf[MAX_MSG+1];
+    fd_set	rset, allset;
+    maxfd = listenfd;			/* initialize */
+	maxi = -1;					/* index into client[] array */
+	for (i = 0; i < max_clients; i++)
+		client[i] = -1;			/* -1 indicates available entry */
+	FD_ZERO(&allset);
+	FD_SET(listenfd, &allset);
+
+    pthread_t tids[max_workers];
+    thread_arg targ;
+    targ.job_queue = &job_queue;
+    targ.bcast_queue = &bcast_queue;
+    for (i = 0; i < max_workers; i++)
+    {
+        int err = pthread_create(tids+i, NULL, worker, &targ);
+        pthread_detach(tids[i]);
+    }
+    for ( ; ; ) {
+		rset = allset;		/* structure assignment */
+		nready = Select(maxfd+1, &rset, NULL, NULL, NULL);
+
+		// Check for EOF on stdin (Ctrl+D)
+		if (FD_ISSET(STDIN_FILENO, &rset)) {
+			char stdin_buf[1];
+			if (read(STDIN_FILENO, stdin_buf, 1) <= 0) {
+				printf("Shutting down server due to EOF.\n");
+				cleanup_and_exit(0);
+			}
+			if (--nready <= 0)
+				continue;
+		}
+
+		if (FD_ISSET(listenfd, &rset)) {	/* new client connection */
+			clilen = sizeof(cliaddr);
+			connfd = Accept(listenfd, (SA *) &cliaddr, &clilen);
+			
+			for (i = 0; i < client_size; i++)
+				if (client[i] < 0) {
+					client[i] = connfd;	/* save descriptor */
+					break;
+				}
+			if (i == client_size){
+				Close(connfd);
+				FD_CLR(connfd, &allset);
+				err_quit("Too many clients, rejecting connection");
+			}
+
+			FD_SET(connfd, &allset);	/* add new descriptor to set */
+			if (connfd > maxfd)
+				maxfd = connfd;			/* for select */
+			if (i > maxi)
+				maxi = i;				/* max index in client[] array */
+            bzero(buf, sizeof(buf));
+            snprintf(buf, sizeof(buf), "Welcome to Chatroom! Please enter your name: \n");
+            Write(connfd, buf, sizeof(buf));
+            bzero(buf, sizeof(buf));
+			if (--nready <= 0)
+				continue;				/* no more readable descriptors */
+		}
+
+		for (i = 0; i <= maxi; i++) {	/* check all clients for data */
+			if ( (sockfd = client[i]) < 0)
+				continue;
+			if (FD_ISSET(sockfd, &rset)) {
+                int tmp_flag1 = 0;
+				if ( (n = Read(sockfd, buf, MAXLINE)) == 0) {
+						/*4connection closed by client */
+					printf("Client disconnected.\n");
+					Close(sockfd);
+					FD_CLR(sockfd, &allset);
+					client[i] = -1;
+				}
+                else if (client_names[i] == '\0') //first connection - user has sent in username
+                {
+                    buf[n] = '\0';
+                    memcpy(client_names[i], buf, n+1);
+                    bzero(buf, sizeof(buf));
+                    snprintf(buf, sizeof(buf), "Let's start chatting, %s!\n", client_names[i]);
+                    Write(connfd, buf, sizeof(buf));
+                    bzero(buf, sizeof(buf));
+                    snprintf(buf, sizeof(buf), "%s joined the chat.\n", client_names[i]);
+                    memcpy(client_buf[i], buf, n+20);
+                    n = n+20;
+                    tmp_flag1 = 2;
+                }
+                else
+                {
+                    
+                    buf[n] = '\0';
+                    size_t len = strlen(client_buf[i]);
+                    memcpy(client_buf[i]+len, buf, n+1);
+                }
+                if (buf[n-1] == '\n')
+                {
+                    Job * nj = calloc(1, sizeof(Job));
+                    nj->sender_fd = sockfd;
+                    memcpy(nj->username, client_names[i], strlen(client_names[i])+1);
+                    memcpy(nj->msg, client_buf[i], strlen(client_buf[i])+1);
+                    nj->next = NULL;
+                    nj->flag = tmp_flag1;
+                    q_push(&job_queue, nj);
+                }
+				if (--nready <= 0)
+					break;				/* no more readable descriptors */
+			}
+		}
+	}
 }
