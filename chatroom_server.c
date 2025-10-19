@@ -135,7 +135,7 @@ void * worker(void * arg)
         else if (strncmp(curr->msg, "/me", 3) == 0)
         {
             printf("curr_msg_orig: %s\n", curr->msg);
-            char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
+            char msg[MAX_MSG+1]; //TODO: may be some size stuff here in corner case testing.
             for (int j = 0; j < strlen(curr->msg); j++)
             {
                 if (curr->msg[j] == '\n')
@@ -164,7 +164,7 @@ void * worker(void * arg)
         }
         else
         {
-            char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
+            char msg[MAX_MSG+1]; //TODO: may be some size stuff here in corner case testing.
             snprintf(msg, sizeof(msg), "%s: %s", curr->username, (curr->msg));
             memcpy(curr->msg, msg, strlen(msg)+1);
         }
@@ -399,7 +399,7 @@ int main(int argc, char **argv) {
 			if (i > maxi)
 				maxi = i;				/* max index in client[] array */
             bzero(buf, sizeof(buf));
-            snprintf(buf, sizeof(buf), "Welcome to Chatroom! Please enter your name: \n");
+            snprintf(buf, sizeof(buf), "Welcome to Chatroom! Please enter your username: \n");
             write(connfd, buf, sizeof(buf));
             bzero(buf, sizeof(buf));
 			if (--nready <= 0)
@@ -430,14 +430,12 @@ int main(int argc, char **argv) {
                     //check if username is already taken
                     bool name_taken = false;
                     for (int j = 0; j <= maxi; j++) {
-                        printf("name[%d]: %s // names[%d]: %s\n",j,client_names[j],i,buf);
                         // check if another active client already has this exact name
                         char* name_j = convertStringToLower(client_names[j]);
                         char* name_i = convertStringToLower(buf);
-                        printf("name_i: %s name_j: %s", name_i, name_j);
+                        printf("client[j] name = %s, inputted name = %s\n",name_j,name_i);
                         if (i != j && client[j] >= 0 && strcmp(name_j, name_i) == 0) {
                             name_taken = true;
-                            printf("Username already taken\n");
                             break;
                         }
                     }
@@ -451,15 +449,25 @@ int main(int argc, char **argv) {
                     }
                     else
                     {
-                        memcpy(client_names[i], buf, strlen(buf)+1);
-                        bzero(buf, sizeof(buf));
-                        snprintf(buf, sizeof(buf), "Let's start chatting, %s!\n", client_names[i]);
-                        write(sockfd, buf, sizeof(buf));
-                        bzero(buf, sizeof(buf));
-                        snprintf(buf, sizeof(buf), "%s joined the chat.\n\0", client_names[i]);
-                        memcpy(client_buff[i], buf, n+20);
-                        n = strlen(client_buff[i]);
-                        tmp_flag1 = 2;
+                        strncpy(client_names[i], buf, MAX_NAME - 1);
+                        client_names[i][MAX_NAME - 1] = '\0';
+                        // Welcome message to just sender
+                        Job * nj_welcome = calloc(1, sizeof(Job));
+                        nj_welcome->sender_fd = sockfd;
+                        strncpy(nj_welcome->username, client_names[i], MAX_NAME);
+                        snprintf(nj_welcome->msg, MAX_MSG, "Let's start chatting, %s!\n", client_names[i]);
+                        nj_welcome->flag = 1;
+                        nj_welcome->next = NULL;
+                        q_push(&job_queue, nj_welcome);
+                        
+                        // Joined message to everyone but sender
+                        Job * nj_joined = calloc(1, sizeof(Job));
+                        nj_joined->sender_fd = sockfd;
+                        strncpy(nj_joined->username, client_names[i], MAX_NAME);
+                        snprintf(nj_joined->msg, MAX_MSG, "%s joined the chat.\n", client_names[i]);
+                        nj_joined->flag = 2; 
+                        nj_joined->next = NULL;
+                        q_push(&job_queue, nj_joined);
                     }
                 }
                 else
