@@ -148,6 +148,13 @@ void * worker(void * arg)
             memcpy(curr->msg, msg, strlen(msg)+1);
             printf("curr_msg: %s\n", curr->msg);
         }
+        else if (strncmp(curr->msg, "/quit", 5) == 0)
+        {
+            char msg[MAX_MSG+1];
+            snprintf(msg, sizeof(msg), "%s left the chat.\n",curr->username);
+            memcpy(curr->msg, msg, strlen(msg)+1);
+            curr->flag = 3;
+        }
         else if (strncmp(curr->msg, "/", 1) == 0) //bad command -> send private error message
         {
             char msg[MAX_MSG+1];
@@ -273,7 +280,7 @@ int main(int argc, char **argv) {
     }
     
     for ( ; ; ) {
-        printf("Enter for loop (DEBUG)\n");
+        //printf("Enter for loop (DEBUG)\n");
         pthread_mutex_lock(&(bcast_queue.mtx));
         while (bcast_queue.head->next != NULL)
         {
@@ -321,12 +328,28 @@ int main(int argc, char **argv) {
                     printf("SEND TO EVERYONE\n");
                     write(client[i], j->msg, strlen(j->msg));
                 }
+                if (j->flag == 3)
+                {
+                    printf("SEND EVERYONE A QUIT MESSAGE");
+                    for (int n = 0; n <= maxi; n++)
+                    {
+                        if (strcmp(client_names[n], j->username) == 0)
+                        {
+                            close(client[n]);
+                            FD_CLR(client[n], &allset);
+                            client[n] = -1;
+                            client_names[n][0] = '\0';
+                            client_buff[n][0] = '\0';
+                        }
+                    }
+                    write(client[i], j->msg, strlen(j->msg));
+                }
             }
             free(j);
         }
         pthread_mutex_unlock(&(bcast_queue.mtx));
 		rset = allset;		/* structure assignment */
-        printf("BEFORE SELECT\n");
+        //printf("BEFORE SELECT\n");
         
         // Use a timeout so select() returns periodically to check broadcast queue
         struct timeval tv;
@@ -334,7 +357,7 @@ int main(int argc, char **argv) {
         tv.tv_usec = 1000;  // 100ms timeout
         
 		int nready = select(maxfd+1, &rset, NULL, NULL, &tv);
-        printf("AFTER SELECT\n");
+        //printf("AFTER SELECT\n");
         
         // If select timed out (nready == 0), continue to check broadcast queue
         if (nready == 0) {
@@ -463,5 +486,7 @@ int main(int argc, char **argv) {
 			}
 		}
 	}
+    q_close(&job_queue);
+    q_close(&bcast_queue);
     free(tids);
 }
