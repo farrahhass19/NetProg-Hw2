@@ -151,7 +151,7 @@ void * worker(void * arg)
         else if (strncmp(curr->msg, "/quit", 5) == 0)
         {
             char msg[MAX_MSG+1];
-            snprintf(msg, sizeof(msg), "%s left the chat.\n",curr->username);
+            snprintf(msg, sizeof(msg), "%s has left the chat.\n",curr->username);
             memcpy(curr->msg, msg, strlen(msg)+1);
             curr->flag = 3;
         }
@@ -222,6 +222,7 @@ char* convertStringToLower(char *str) {
     for (int i = 0; str[i] != '\0'; i++) {
         ret[i] = tolower(str[i]);
     }
+    ret[strlen(str)] = '\0';
     return ret;
 }
 
@@ -426,9 +427,10 @@ int main(int argc, char **argv) {
 				}
                 else if (client_names[i][0] == '\0') //first connection - user has sent in username
                 {
-                    buf[n-1] = '\0'; //get rid of newline
-                    //check if username is already takenc
                     bzero(client_names[i], sizeof(client_names[i]));
+                    bzero(client_buff[i], sizeof(client_buff[i]));
+                    buf[n-1] = '\0'; //get rid of newline
+                    //check if username is already taken
                     bool name_taken = false;
                     for (int j = 0; j <= maxi; j++) {
                         // check if another active client already has this exact name
