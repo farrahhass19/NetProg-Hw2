@@ -292,19 +292,19 @@ int main(int argc, char **argv) {
                     if (j->msg[0] == '\0')
                     {
                         char response[MAX_MSG] = "";//TODO: size issues may happen here, idk
-                        int tracker = 0;
+                        snprintf(response, MAX_MSG, "Active users:\n");
+                        write(j->sender_fd, response, strlen(response));
+                        bzero(response, MAX_MSG);
                         for (int n = 0; n <= maxi; n++)
                         {
                             if (client[n] <= 0)
                             {
                                 continue;
                             }
-                            int x = snprintf(response+tracker, MAX_MSG-tracker, " %s", client_names[n]);
-                            tracker += x;
-                            printf("response: %s\n", response);
+                            snprintf(response, MAX_MSG, " - %s\n", client_names[n]);
+                            write(j->sender_fd, response, strlen(response));
+                            bzero(response, MAX_MSG);
                         }
-                        snprintf(response+tracker, sizeof(response)-tracker, "\n");
-                        write(j->sender_fd, response+1, strlen(response));
                     }
                     else
                     {
@@ -327,8 +327,19 @@ int main(int argc, char **argv) {
         pthread_mutex_unlock(&(bcast_queue.mtx));
 		rset = allset;		/* structure assignment */
         printf("BEFORE SELECT\n");
-		int nready = select(maxfd+1, &rset, NULL, NULL, NULL);
+        
+        // Use a timeout so select() returns periodically to check broadcast queue
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 1000;  // 100ms timeout
+        
+		int nready = select(maxfd+1, &rset, NULL, NULL, &tv);
         printf("AFTER SELECT\n");
+        
+        // If select timed out (nready == 0), continue to check broadcast queue
+        if (nready == 0) {
+            continue;
+        }
 		// Check for EOF on stdin (Ctrl+D)
 		if (FD_ISSET(STDIN_FILENO, &rset)) {
             printf("Forced shut down (DEBUG)\n");
@@ -382,7 +393,7 @@ int main(int argc, char **argv) {
 				continue;
             //printf("1\n");
 			if (FD_ISSET(sockfd, &rset)) {
-                int tmp_flag1 = 0;
+                int tmp_flag1 = 2;
 				if ( (n = read(sockfd, buf, MAX_MSG)) == 0) {
 						/*4connection closed by client */
 					printf("Client disconnected.\n");
