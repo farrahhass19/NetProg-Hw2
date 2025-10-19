@@ -3,6 +3,8 @@ server uses select, when it gets a complete message it packages the message as a
 The worker thread sees that the queue is not empty, handles commands, puts in broadcast queue.
 some stuff may need fixing?
 some TODO stuff should b looked at in case of error
+edited to remove unp instances and wrapper functions
+adding parts of missing code frrom lab3
 
 next steps:
 handling broadcast queue

@@ -27,7 +27,6 @@
 #include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include "../extracted code/unpv13e-master/unpv13e-master/lib/unp.h"
 
 #define MAX_NAME     32
 #define MAX_MSG      1024
@@ -70,7 +69,7 @@ static void q_init(Queue *q) {
     q->tail = q->head;
 }
 static void q_close(Queue *q) {
-    q->closed = 1
+    q->closed = 1;
 }
 static void q_push(Queue *q, Job *j) {
     pthread_mutex_lock(&(q->mtx));
@@ -128,6 +127,49 @@ void * worker(void * arg)
     }
 }
 
+struct Message {
+    char* data;
+    struct Message* next;
+};
+
+void cleanup_and_exit(int sig) {
+    printf("\nReceived signal %d, cleaning up...\n", sig);
+    
+    int client_size = 5;
+    int client[5];
+    int listenfd;
+    int maxi = -1;
+    struct Message* head = NULL;
+    
+    // Close all client connections
+    for (int i = 0; i <= maxi; i++) {
+        if (client[i] >= 0) {
+            close(client[i]);
+        }
+    }
+    
+    // Close listening socket
+    if (listenfd >= 0) {
+        close(listenfd);
+    }
+    
+    // Free message list
+    struct Message* current = head;
+    while (current != NULL) {
+        struct Message* next = current->next;
+        if (current->data != NULL) {
+            free(current->data);
+        }
+        free(current);
+        current = next;
+    }
+    
+    printf("Cleanup complete. Exiting.\n");
+    exit(0);
+}
+
+void err_quit(const char *, ...);
+
 /* ---------------- Main ---------------- */
 int main(int argc, char **argv) {
     if (argc != 4)
@@ -139,20 +181,20 @@ int main(int argc, char **argv) {
     int num_workers = atoi(argv[2]);
     int max_clients = atoi(argv[3]);
     
-    int listenfd = Socket(AF_INET, SOCK_STREAM, 0);
+    int listenfd = socket(AF_INET, SOCK_STREAM, 0);
 
     struct sockaddr_in servaddr, cliaddr;
     bzero(&servaddr, sizeof(servaddr));
 	servaddr.sin_family      = AF_INET;
 	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
 	servaddr.sin_port        = htons(port);
-    Bind(listenfd, (SA *)servaddr, sizeof(servaddr));
-    Listen(listenfd, LISTENQ);
+    bind(listenfd, (struct sockaddr *)&servaddr, sizeof(servaddr));
+    listen(listenfd, MAX_CLIENTS);
 
     int maxfd, maxi;
     int client[max_clients];
-    int client_buff[max_clients][INBUF]; // TODO: change this and below to dynamically allocate memory when needed for space saving
-    int client_names[max_clients][MAX_NAME];
+    char client_buff[max_clients][INBUF]; // TODO: change this and below to dynamically allocate memory when needed for space saving
+    char client_names[max_clients][MAX_NAME];
     int i;
     char buf[MAX_MSG+1];
     fd_set	rset, allset;
@@ -163,18 +205,27 @@ int main(int argc, char **argv) {
 	FD_ZERO(&allset);
 	FD_SET(listenfd, &allset);
 
-    pthread_t tids[max_workers];
+    // pthread_t tids[num_workers];
+    pthread_t *tids = malloc(num_workers * sizeof(pthread_t));
     thread_arg targ;
     targ.job_queue = &job_queue;
     targ.bcast_queue = &bcast_queue;
-    for (i = 0; i < max_workers; i++)
+
+    // Set up signal handlers for cleanup
+	signal(SIGINT, cleanup_and_exit);   // Ctrl+C
+	signal(SIGTERM, cleanup_and_exit);  // Termination signal
+
+    // Segfaulting in this loop don't know why
+    printf("Hit here 1\n");
+    for (i = 0; i < num_workers; i++)
     {
         int err = pthread_create(tids+i, NULL, worker, &targ);
         pthread_detach(tids[i]);
     }
+    printf("Hit here 2\n");
     for ( ; ; ) {
 		rset = allset;		/* structure assignment */
-		nready = Select(maxfd+1, &rset, NULL, NULL, NULL);
+		size_t nready = select(maxfd+1, &rset, NULL, NULL, NULL);
 
 		// Check for EOF on stdin (Ctrl+D)
 		if (FD_ISSET(STDIN_FILENO, &rset)) {
@@ -188,18 +239,21 @@ int main(int argc, char **argv) {
 		}
 
 		if (FD_ISSET(listenfd, &rset)) {	/* new client connection */
-			clilen = sizeof(cliaddr);
-			connfd = Accept(listenfd, (SA *) &cliaddr, &clilen);
-			
-			for (i = 0; i < client_size; i++)
+			size_t clilen = sizeof(cliaddr);
+			int connfd = accept(listenfd, (struct sockaddr *)&cliaddr, &clilen);
+            
+			for (i = 0; i < max_clients; i++)
 				if (client[i] < 0) {
 					client[i] = connfd;	/* save descriptor */
 					break;
 				}
-			if (i == client_size){
-				Close(connfd);
+			if (i == max_clients){
+				close(connfd);
 				FD_CLR(connfd, &allset);
-				err_quit("Too many clients, rejecting connection");
+                snprintf(buf, sizeof(buf), "Server is full, rejecting connection request.\n");
+				write(connfd, buf, strlen(buf));
+                close(connfd);
+                printf("Connection rejected: server is full.\n");
 			}
 
 			FD_SET(connfd, &allset);	/* add new descriptor to set */
@@ -209,21 +263,22 @@ int main(int argc, char **argv) {
 				maxi = i;				/* max index in client[] array */
             bzero(buf, sizeof(buf));
             snprintf(buf, sizeof(buf), "Welcome to Chatroom! Please enter your name: \n");
-            Write(connfd, buf, sizeof(buf));
+            write(connfd, buf, sizeof(buf));
             bzero(buf, sizeof(buf));
 			if (--nready <= 0)
 				continue;				/* no more readable descriptors */
 		}
 
 		for (i = 0; i <= maxi; i++) {	/* check all clients for data */
+            int sockfd, n;
 			if ( (sockfd = client[i]) < 0)
 				continue;
 			if (FD_ISSET(sockfd, &rset)) {
                 int tmp_flag1 = 0;
-				if ( (n = Read(sockfd, buf, MAXLINE)) == 0) {
+				if ( (n = read(sockfd, buf, MAX_MSG)) == 0) {
 						/*4connection closed by client */
 					printf("Client disconnected.\n");
-					Close(sockfd);
+					close(sockfd);
 					FD_CLR(sockfd, &allset);
 					client[i] = -1;
 				}
@@ -233,10 +288,10 @@ int main(int argc, char **argv) {
                     memcpy(client_names[i], buf, n+1);
                     bzero(buf, sizeof(buf));
                     snprintf(buf, sizeof(buf), "Let's start chatting, %s!\n", client_names[i]);
-                    Write(connfd, buf, sizeof(buf));
+                    write(sockfd, buf, sizeof(buf));
                     bzero(buf, sizeof(buf));
                     snprintf(buf, sizeof(buf), "%s joined the chat.\n", client_names[i]);
-                    memcpy(client_buf[i], buf, n+20);
+                    memcpy(client_buff[i], buf, n+20);
                     n = n+20;
                     tmp_flag1 = 2;
                 }
@@ -244,15 +299,15 @@ int main(int argc, char **argv) {
                 {
                     
                     buf[n] = '\0';
-                    size_t len = strlen(client_buf[i]);
-                    memcpy(client_buf[i]+len, buf, n+1);
+                    size_t len = strlen(client_buff[i]);
+                    memcpy(client_buff[i]+len, buf, n+1);
                 }
                 if (buf[n-1] == '\n')
                 {
                     Job * nj = calloc(1, sizeof(Job));
                     nj->sender_fd = sockfd;
                     memcpy(nj->username, client_names[i], strlen(client_names[i])+1);
-                    memcpy(nj->msg, client_buf[i], strlen(client_buf[i])+1);
+                    memcpy(nj->msg, client_buff[i], strlen(client_buff[i])+1);
                     nj->next = NULL;
                     nj->flag = tmp_flag1;
                     q_push(&job_queue, nj);
@@ -262,4 +317,5 @@ int main(int argc, char **argv) {
 			}
 		}
 	}
+    free(tids);
 }
