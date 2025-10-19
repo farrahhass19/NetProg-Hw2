@@ -67,6 +67,9 @@ typedef struct thread_arg {
 static void q_init(Queue *q) {
     q->head = calloc(1, sizeof(Job)); //dummy head node
     q->tail = q->head;
+
+    pthread_mutex_init(&(q->mtx), NULL);
+    pthread_cond_init(&(q->cv), NULL);
 }
 static void q_close(Queue *q) {
     q->closed = 1;
@@ -75,14 +78,39 @@ static void q_push(Queue *q, Job *j) {
     pthread_mutex_lock(&(q->mtx));
     q->tail->next = j;
     q->tail = q->tail->next;
+    pthread_cond_signal(&(q->cv));
     pthread_mutex_unlock(&(q->mtx));
 }
 static Job *q_pop(Queue *q) {
+    pthread_mutex_lock(&(q->mtx));
+    // Wait in a 'while' loop as long as the queue is empty
+    while (q->head->next == NULL) {
+        // (This check lets threads exit if you call q_close)
+        if (q->closed) {
+            pthread_mutex_unlock(&(q->mtx));
+            return NULL; 
+        }
+        // ulock the mutex (so q_push can work)and re-locks mutex upon wakeup.
+        pthread_cond_wait(&(q->cv), &(q->mtx));
+    }
+    // dequeue the job from the front
+    Job * ret = q->head->next;
+    q->head->next = ret->next;
+
+    // if only jon set tail
+    if (q->head->next == NULL) {
+        q->tail = q->head;
+    }
+
+    pthread_mutex_unlock(&(q->mtx));
+    return ret;
+    /* // This is old code
     pthread_mutex_lock(&(q->mtx));
     Job * ret = q->head->next;
     q->head->next = q->head->next->next;
     pthread_mutex_unlock(&(q->mtx));
     return ret;
+    */
 }
 
 void * worker(void * arg)
@@ -91,40 +119,38 @@ void * worker(void * arg)
     Queue * bcast_queue = ((thread_arg *)arg)->bcast_queue;
     for (;;)
     {
-        if (job_queue->head->next == NULL)
+        Job * curr = q_pop(job_queue);
+        if (curr == NULL) 
         {
-            continue;
+            break; 
+        }
+        if (strncmp(curr->msg, "/who", 4) == 0)
+        {
+            curr->msg[0] = '\0'; //TODO: null message - when using broadcast, check for this and substitute list of client usernames
+            curr->flag = 1;
+        }
+        else if (strncmp(curr->msg, "/me", 3) == 0)
+        {
+            char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
+            snprintf(msg, sizeof(msg), "*%s%s*", curr->username, (curr->msg)+3);
+            memcpy(curr->msg, msg, strlen(msg)+1);
+        }
+        else if (strncmp(curr->msg, "/", 1) == 0) //bad command -> send private error message
+        {
+            char msg[MAX_MSG+1];
+            snprintf(msg, sizeof(msg), "Invalid command. Type /who, /me, or /quit.\n");
+            memcpy(curr->msg, msg, strlen(msg)+1);
+            curr->flag = 1;
         }
         else
         {
-            Job * curr = q_pop(job_queue);
-            if (strncmp(curr->msg, "/who", 4) == 0)
-            {
-                curr->msg[0] = '\0'; //TODO: null message - when using broadcast, check for this and substitute list of client usernames
-                curr->flag = 1;
-            }
-            else if (strncmp(curr->msg, "/me", 3) == 0)
-            {
-                char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
-                snprintf(msg, sizeof(msg), "*%s%s*", curr->username, (curr->msg)+3);
-                memcpy(curr->msg, msg, strlen(msg)+1);
-            }
-            else if (strncmp(curr->msg, "/", 1) == 0) //bad command -> send private error message
-            {
-                char msg[MAX_MSG+1];
-                snprintf(msg, sizeof(msg), "Invalid command. Type /who, /me, or /quit.\n");
-                memcpy(curr->msg, msg, strlen(msg)+1);
-                curr->flag = 1;
-            }
-            else
-            {
-                char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
-                snprintf(msg, sizeof(msg), "%s: %s", curr->username, (curr->msg));
-                memcpy(curr->msg, msg, strlen(msg)+1);
-            }
-            q_push(bcast_queue, curr);
+            char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
+            snprintf(msg, sizeof(msg), "%s: %s", curr->username, (curr->msg));
+            memcpy(curr->msg, msg, strlen(msg)+1);
         }
+        q_push(bcast_queue, curr);
     }
+    return NULL;
 }
 
 struct Message {
@@ -205,6 +231,9 @@ int main(int argc, char **argv) {
 	FD_ZERO(&allset);
 	FD_SET(listenfd, &allset);
 
+    q_init(&job_queue);
+    q_init(&bcast_queue);
+
     // pthread_t tids[num_workers];
     pthread_t *tids = malloc(num_workers * sizeof(pthread_t));
     thread_arg targ;
@@ -214,21 +243,21 @@ int main(int argc, char **argv) {
     // Set up signal handlers for cleanup
 	signal(SIGINT, cleanup_and_exit);   // Ctrl+C
 	signal(SIGTERM, cleanup_and_exit);  // Termination signal
-
-    // Segfaulting in this loop don't know why
-    printf("Hit here 1\n");
-    for (i = 0; i < num_workers; i++)
+    
+    for (i = 0; i <= num_workers; i++)
     {
         int err = pthread_create(tids+i, NULL, worker, &targ);
         pthread_detach(tids[i]);
     }
-    printf("Hit here 2\n");
+    
     for ( ; ; ) {
+        printf("Enter for loop (DEBUG)\n");
 		rset = allset;		/* structure assignment */
 		size_t nready = select(maxfd+1, &rset, NULL, NULL, NULL);
 
 		// Check for EOF on stdin (Ctrl+D)
 		if (FD_ISSET(STDIN_FILENO, &rset)) {
+            printf("Forced shut down (DEBUG)\n");
 			char stdin_buf[1];
 			if (read(STDIN_FILENO, stdin_buf, 1) <= 0) {
 				printf("Shutting down server due to EOF.\n");
@@ -239,6 +268,7 @@ int main(int argc, char **argv) {
 		}
 
 		if (FD_ISSET(listenfd, &rset)) {	/* new client connection */
+            printf("Receive new client connection (DEBUG)\n");
 			size_t clilen = sizeof(cliaddr);
 			int connfd = accept(listenfd, (struct sockaddr *)&cliaddr, &clilen);
             
@@ -254,6 +284,7 @@ int main(int argc, char **argv) {
 				write(connfd, buf, strlen(buf));
                 close(connfd);
                 printf("Connection rejected: server is full.\n");
+                continue;
 			}
 
 			FD_SET(connfd, &allset);	/* add new descriptor to set */
@@ -270,6 +301,7 @@ int main(int argc, char **argv) {
 		}
 
 		for (i = 0; i <= maxi; i++) {	/* check all clients for data */
+            printf("Enter for loop for clients(DEBUG)\n");
             int sockfd, n;
 			if ( (sockfd = client[i]) < 0)
 				continue;
@@ -282,7 +314,7 @@ int main(int argc, char **argv) {
 					FD_CLR(sockfd, &allset);
 					client[i] = -1;
 				}
-                else if (client_names[i] == '\0') //first connection - user has sent in username
+                else if (client_names[i][0] == '\0') //first connection - user has sent in username
                 {
                     buf[n] = '\0';
                     memcpy(client_names[i], buf, n+1);
