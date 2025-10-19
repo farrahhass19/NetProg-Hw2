@@ -427,7 +427,8 @@ int main(int argc, char **argv) {
                 else if (client_names[i][0] == '\0') //first connection - user has sent in username
                 {
                     buf[n-1] = '\0'; //get rid of newline
-                    //check if username is already taken
+                    //check if username is already takenc
+                    bzero(client_names[i], sizeof(client_names[i]));
                     bool name_taken = false;
                     for (int j = 0; j <= maxi; j++) {
                         // check if another active client already has this exact name
@@ -449,7 +450,7 @@ int main(int argc, char **argv) {
                     }
                     else
                     {
-                        strncpy(client_names[i], buf, MAX_NAME - 1);
+                        strncpy(client_names[i], buf, MAX_NAME);
                         client_names[i][MAX_NAME - 1] = '\0';
                         // Welcome message to just sender
                         Job * nj_welcome = calloc(1, sizeof(Job));
@@ -458,7 +459,7 @@ int main(int argc, char **argv) {
                         snprintf(nj_welcome->msg, MAX_MSG, "Let's start chatting, %s!\n", client_names[i]);
                         nj_welcome->flag = 1;
                         nj_welcome->next = NULL;
-                        q_push(&job_queue, nj_welcome);
+                        q_push(&bcast_queue, nj_welcome);
                         
                         // Joined message to everyone but sender
                         Job * nj_joined = calloc(1, sizeof(Job));
@@ -467,7 +468,7 @@ int main(int argc, char **argv) {
                         snprintf(nj_joined->msg, MAX_MSG, "%s joined the chat.\n", client_names[i]);
                         nj_joined->flag = 2; 
                         nj_joined->next = NULL;
-                        q_push(&job_queue, nj_joined);
+                        q_push(&bcast_queue, nj_joined);
                     }
                 }
                 else
