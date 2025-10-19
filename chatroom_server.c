@@ -134,9 +134,19 @@ void * worker(void * arg)
         }
         else if (strncmp(curr->msg, "/me", 3) == 0)
         {
+            printf("curr_msg_orig: %s\n", curr->msg);
             char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
-            snprintf(msg, strlen(msg), "*%s%s*", curr->username, (curr->msg)+3);
+            for (int j = 0; j < strlen(curr->msg); j++)
+            {
+                if (curr->msg[j] == '\n')
+                {
+                    curr->msg[j] = '\0';
+                }
+            }
+            snprintf(msg, MAX_MSG, "*%s%s*\n", curr->username, (curr->msg)+3);
+            printf("msg: %s\n", msg);
             memcpy(curr->msg, msg, strlen(msg)+1);
+            printf("curr_msg: %s\n", curr->msg);
         }
         else if (strncmp(curr->msg, "/", 1) == 0) //bad command -> send private error message
         {
@@ -263,7 +273,7 @@ int main(int argc, char **argv) {
     }
     
     for ( ; ; ) {
-        // printf("Enter for loop (DEBUG)\n");
+        printf("Enter for loop (DEBUG)\n");
         pthread_mutex_lock(&(bcast_queue.mtx));
         while (bcast_queue.head->next != NULL)
         {
@@ -282,11 +292,19 @@ int main(int argc, char **argv) {
                     if (j->msg[0] == '\0')
                     {
                         char response[MAX_MSG] = "";//TODO: size issues may happen here, idk
-                        for (int n = 0; n < maxi; n++)
+                        int tracker = 0;
+                        for (int n = 0; n <= maxi; n++)
                         {
-                            snprintf(response, sizeof(response), "%s %s\n", response, client_names[n]);
+                            if (client[n] <= 0)
+                            {
+                                continue;
+                            }
+                            int x = snprintf(response+tracker, MAX_MSG-tracker, " %s", client_names[n]);
+                            tracker += x;
+                            printf("response: %s\n", response);
                         }
-                        write(j->sender_fd, response, strlen(response));
+                        snprintf(response+tracker, sizeof(response)-tracker, "\n");
+                        write(j->sender_fd, response+1, strlen(response));
                     }
                     else
                     {
@@ -308,9 +326,9 @@ int main(int argc, char **argv) {
         }
         pthread_mutex_unlock(&(bcast_queue.mtx));
 		rset = allset;		/* structure assignment */
-        //printf("BEFORE SELECT\n");
+        printf("BEFORE SELECT\n");
 		int nready = select(maxfd+1, &rset, NULL, NULL, NULL);
-        //printf("AFTER SELECT\n");
+        printf("AFTER SELECT\n");
 		// Check for EOF on stdin (Ctrl+D)
 		if (FD_ISSET(STDIN_FILENO, &rset)) {
             printf("Forced shut down (DEBUG)\n");
@@ -357,7 +375,7 @@ int main(int argc, char **argv) {
 		}
 
 		for (i = 0; i <= maxi; i++) {	/* check all clients for data */
-            //printf("Enter for loop for clients(DEBUG)\n");
+            printf("Enter for loop for clients(DEBUG)\n");
             int sockfd, n;
             //printf("client %d: %d\n", i, client[i]);
 			if ( (sockfd = client[i]) < 0)
@@ -376,13 +394,13 @@ int main(int argc, char **argv) {
                 {
                     buf[n-1] = '\0'; //get rid of newline
                     //check if username is already taken
-
                     bool name_taken = false;
                     for (int j = 0; j <= maxi; j++) {
                         printf("name[%d]: %s // names[%d]: %s\n",j,client_names[j],i,buf);
                         // check if another active client already has this exact name
                         char* name_j = convertStringToLower(client_names[j]);
                         char* name_i = convertStringToLower(buf);
+                        printf("name_i: %s name_j: %s", name_i, name_j);
                         if (i != j && client[j] >= 0 && strcmp(name_j, name_i) == 0) {
                             name_taken = true;
                             printf("Username already taken\n");
@@ -399,7 +417,7 @@ int main(int argc, char **argv) {
                     }
                     else
                     {
-                        memcpy(client_names[i], buf, n+1);
+                        memcpy(client_names[i], buf, strlen(buf)+1);
                         bzero(buf, sizeof(buf));
                         snprintf(buf, sizeof(buf), "Let's start chatting, %s!\n", client_names[i]);
                         write(sockfd, buf, sizeof(buf));
