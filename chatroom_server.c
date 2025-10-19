@@ -66,6 +66,7 @@ typedef struct thread_arg {
 /* ---------------- Queue Utilities ---------------- */
 static void q_init(Queue *q) {
     q->head = calloc(1, sizeof(Job)); //dummy head node
+    q->head->next = NULL;
     q->tail = q->head;
 
     pthread_mutex_init(&(q->mtx), NULL);
@@ -117,6 +118,7 @@ void * worker(void * arg)
 {
     Queue * job_queue = ((thread_arg *)arg)->job_queue;
     Queue * bcast_queue = ((thread_arg *)arg)->bcast_queue;
+    printf("ONLINE\n");
     for (;;)
     {
         Job * curr = q_pop(job_queue);
@@ -149,6 +151,7 @@ void * worker(void * arg)
             memcpy(curr->msg, msg, strlen(msg)+1);
         }
         q_push(bcast_queue, curr);
+        printf("pushed!\n");
     }
     return NULL;
 }
@@ -252,9 +255,52 @@ int main(int argc, char **argv) {
     
     for ( ; ; ) {
         printf("Enter for loop (DEBUG)\n");
+        pthread_mutex_lock(&(bcast_queue.mtx));
+        while (bcast_queue.head->next != NULL)
+        {
+            printf("\nBEFORE POP\n");
+            Job * j = bcast_queue.head->next;
+            bcast_queue.head->next = j->next;
+            // if only jon set tail
+            if (bcast_queue.head->next == NULL) {
+                bcast_queue.tail = bcast_queue.head;
+            }
+            printf("\nAFTER POP\n");
+            for (i = 0; i <= maxi; i++)
+            {
+                if (j->flag == 1 && (client[i] == j->sender_fd))
+                {
+                    if (j->msg[0] == '\0')
+                    {
+                        char response[MAX_MSG] = "";//TODO: size issues may happen here, idk
+                        for (int n = 0; n < maxi; n++)
+                        {
+                            snprintf(response, sizeof(response), "%s %s\n", response, client_names[n]);
+                        }
+                        write(j->sender_fd, response, strlen(response));
+                    }
+                    else
+                    {
+                        write(j->sender_fd, j->msg, strlen(j->msg));
+                    }
+                }
+                if (j->flag == 2 &&client[i] != j->sender_fd)
+                {
+                    write(client[i], j->msg, strlen(j->msg));
+                }
+                if (j->flag == 0)
+                {
+                    printf("SEND TO EVERYONE");
+                    write(client[i], j->msg, strlen(j->msg));
+                }
+            }
+            free(j);
+        }
+        pthread_mutex_unlock(&(bcast_queue.mtx));
 		rset = allset;		/* structure assignment */
-		size_t nready = select(maxfd+1, &rset, NULL, NULL, NULL);
-
+        printf("BEFORE SELECT\n");
+		int nready = select(maxfd+1, &rset, NULL, NULL, NULL);
+        printf("AFTER SELECT\n");
 		// Check for EOF on stdin (Ctrl+D)
 		if (FD_ISSET(STDIN_FILENO, &rset)) {
             printf("Forced shut down (DEBUG)\n");
@@ -271,7 +317,6 @@ int main(int argc, char **argv) {
             printf("Receive new client connection (DEBUG)\n");
 			size_t clilen = sizeof(cliaddr);
 			int connfd = accept(listenfd, (struct sockaddr *)&cliaddr, &clilen);
-            
 			for (i = 0; i < max_clients; i++)
 				if (client[i] < 0) {
 					client[i] = connfd;	/* save descriptor */
@@ -286,7 +331,6 @@ int main(int argc, char **argv) {
                 printf("Connection rejected: server is full.\n");
                 continue;
 			}
-
 			FD_SET(connfd, &allset);	/* add new descriptor to set */
 			if (connfd > maxfd)
 				maxfd = connfd;			/* for select */
@@ -297,14 +341,18 @@ int main(int argc, char **argv) {
             write(connfd, buf, sizeof(buf));
             bzero(buf, sizeof(buf));
 			if (--nready <= 0)
-				continue;				/* no more readable descriptors */
+            {
+                continue;				/* no more readable descriptors */
+            }
 		}
 
 		for (i = 0; i <= maxi; i++) {	/* check all clients for data */
             printf("Enter for loop for clients(DEBUG)\n");
             int sockfd, n;
+            printf("client %d: %d\n", i, client[i]);
 			if ( (sockfd = client[i]) < 0)
 				continue;
+            printf("1\n");
 			if (FD_ISSET(sockfd, &rset)) {
                 int tmp_flag1 = 0;
 				if ( (n = read(sockfd, buf, MAX_MSG)) == 0) {
@@ -316,7 +364,7 @@ int main(int argc, char **argv) {
 				}
                 else if (client_names[i][0] == '\0') //first connection - user has sent in username
                 {
-                    buf[n] = '\0';
+                    buf[n-1] = '\0'; //get rid of newline
                     memcpy(client_names[i], buf, n+1);
                     bzero(buf, sizeof(buf));
                     snprintf(buf, sizeof(buf), "Let's start chatting, %s!\n", client_names[i]);
@@ -329,7 +377,6 @@ int main(int argc, char **argv) {
                 }
                 else
                 {
-                    
                     buf[n] = '\0';
                     size_t len = strlen(client_buff[i]);
                     memcpy(client_buff[i]+len, buf, n+1);
@@ -342,9 +389,11 @@ int main(int argc, char **argv) {
                     memcpy(nj->msg, client_buff[i], strlen(client_buff[i])+1);
                     nj->next = NULL;
                     nj->flag = tmp_flag1;
+                    bzero(client_buff[i], sizeof(client_buff[i]));
                     q_push(&job_queue, nj);
                 }
 				if (--nready <= 0)
+                    printf("4\n");
 					break;				/* no more readable descriptors */
 			}
 		}
