@@ -27,6 +27,7 @@
 #include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <stdbool.h>
 
 #define MAX_NAME     32
 #define MAX_MSG      1024
@@ -118,7 +119,7 @@ void * worker(void * arg)
 {
     Queue * job_queue = ((thread_arg *)arg)->job_queue;
     Queue * bcast_queue = ((thread_arg *)arg)->bcast_queue;
-    printf("ONLINE\n");
+    //printf("ONLINE\n");
     for (;;)
     {
         Job * curr = q_pop(job_queue);
@@ -134,7 +135,7 @@ void * worker(void * arg)
         else if (strncmp(curr->msg, "/me", 3) == 0)
         {
             char msg[MAX_MSG+1]; //TODO: may be some size fuckery here in corner case testing.
-            snprintf(msg, sizeof(msg), "*%s%s*", curr->username, (curr->msg)+3);
+            snprintf(msg, strlen(msg), "*%s%s*", curr->username, (curr->msg)+3);
             memcpy(curr->msg, msg, strlen(msg)+1);
         }
         else if (strncmp(curr->msg, "/", 1) == 0) //bad command -> send private error message
@@ -199,6 +200,14 @@ void cleanup_and_exit(int sig) {
 
 void err_quit(const char *, ...);
 
+char* convertStringToLower(char *str) {
+    char* ret = malloc(strlen(str) + 1);
+    for (int i = 0; str[i] != '\0'; i++) {
+        ret[i] = tolower(str[i]);
+    }
+    return ret;
+}
+
 /* ---------------- Main ---------------- */
 int main(int argc, char **argv) {
     if (argc != 4)
@@ -254,7 +263,7 @@ int main(int argc, char **argv) {
     }
     
     for ( ; ; ) {
-        printf("Enter for loop (DEBUG)\n");
+        // printf("Enter for loop (DEBUG)\n");
         pthread_mutex_lock(&(bcast_queue.mtx));
         while (bcast_queue.head->next != NULL)
         {
@@ -299,9 +308,9 @@ int main(int argc, char **argv) {
         }
         pthread_mutex_unlock(&(bcast_queue.mtx));
 		rset = allset;		/* structure assignment */
-        printf("BEFORE SELECT\n");
+        //printf("BEFORE SELECT\n");
 		int nready = select(maxfd+1, &rset, NULL, NULL, NULL);
-        printf("AFTER SELECT\n");
+        //printf("AFTER SELECT\n");
 		// Check for EOF on stdin (Ctrl+D)
 		if (FD_ISSET(STDIN_FILENO, &rset)) {
             printf("Forced shut down (DEBUG)\n");
@@ -315,7 +324,7 @@ int main(int argc, char **argv) {
 		}
 
 		if (FD_ISSET(listenfd, &rset)) {	/* new client connection */
-            printf("Receive new client connection (DEBUG)\n");
+            //printf("Receive new client connection (DEBUG)\n");
 			size_t clilen = sizeof(cliaddr);
 			int connfd = accept(listenfd, (struct sockaddr *)&cliaddr, &clilen);
 			for (i = 0; i < max_clients; i++)
@@ -348,12 +357,12 @@ int main(int argc, char **argv) {
 		}
 
 		for (i = 0; i <= maxi; i++) {	/* check all clients for data */
-            printf("Enter for loop for clients(DEBUG)\n");
+            //printf("Enter for loop for clients(DEBUG)\n");
             int sockfd, n;
-            printf("client %d: %d\n", i, client[i]);
+            //printf("client %d: %d\n", i, client[i]);
 			if ( (sockfd = client[i]) < 0)
 				continue;
-            printf("1\n");
+            //printf("1\n");
 			if (FD_ISSET(sockfd, &rset)) {
                 int tmp_flag1 = 0;
 				if ( (n = read(sockfd, buf, MAX_MSG)) == 0) {
@@ -366,15 +375,40 @@ int main(int argc, char **argv) {
                 else if (client_names[i][0] == '\0') //first connection - user has sent in username
                 {
                     buf[n-1] = '\0'; //get rid of newline
-                    memcpy(client_names[i], buf, n+1);
-                    bzero(buf, sizeof(buf));
-                    snprintf(buf, sizeof(buf), "Let's start chatting, %s!\n", client_names[i]);
-                    write(sockfd, buf, sizeof(buf));
-                    bzero(buf, sizeof(buf));
-                    snprintf(buf, sizeof(buf), "%s joined the chat.\n\0", client_names[i]);
-                    memcpy(client_buff[i], buf, n+20);
-                    n = strlen(client_buff[i]);
-                    tmp_flag1 = 2;
+                    //check if username is already taken
+
+                    bool name_taken = false;
+                    for (int j = 0; j <= maxi; j++) {
+                        printf("name[%d]: %s // names[%d]: %s\n",j,client_names[j],i,buf);
+                        // check if another active client already has this exact name
+                        char* name_j = convertStringToLower(client_names[j]);
+                        char* name_i = convertStringToLower(buf);
+                        if (i != j && client[j] >= 0 && strcmp(name_j, name_i) == 0) {
+                            name_taken = true;
+                            printf("Username already taken\n");
+                            break;
+                        }
+                    }
+
+                    if(name_taken)
+                    {
+                        // If the username is already taken prompt for another username
+                        char tmp_msg[MAX_MSG];
+                        snprintf(tmp_msg, sizeof(tmp_msg), "Username \"%s\" is already in use. Try another:\n", buf);
+                        write(sockfd, tmp_msg, strlen(tmp_msg));
+                    }
+                    else
+                    {
+                        memcpy(client_names[i], buf, n+1);
+                        bzero(buf, sizeof(buf));
+                        snprintf(buf, sizeof(buf), "Let's start chatting, %s!\n", client_names[i]);
+                        write(sockfd, buf, sizeof(buf));
+                        bzero(buf, sizeof(buf));
+                        snprintf(buf, sizeof(buf), "%s joined the chat.\n\0", client_names[i]);
+                        memcpy(client_buff[i], buf, n+20);
+                        n = strlen(client_buff[i]);
+                        tmp_flag1 = 2;
+                    }
                 }
                 else
                 {
