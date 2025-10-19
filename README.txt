@@ -7,8 +7,11 @@ edited to remove unp instances and wrapper functions
 adding parts of missing code frrom lab3
 fixing segfault in initial thread creation
 handling broadcast queue
+fixing new client connection messaging
+fixing testing for duplicate names
 
 next steps:
 testing/error fixing
 handle client connections (farrah)
 minor issues with broadcasting (it works, but i would have to pay other people money for them to use this)
+bad username testing
