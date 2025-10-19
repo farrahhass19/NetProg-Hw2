@@ -6,9 +6,9 @@ some TODO stuff should b looked at in case of error
 edited to remove unp instances and wrapper functions
 adding parts of missing code frrom lab3
 fixing segfault in initial thread creation
+handling broadcast queue
 
 next steps:
-handling broadcast queue
-i dont think i did the queue handling correctly - use condition variable
 testing/error fixing
 handle client connections (farrah)
+minor issues with broadcasting (it works, but i would have to pay other people money for them to use this)
