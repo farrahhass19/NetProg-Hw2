@@ -284,13 +284,14 @@ int main(int argc, char **argv) {
                         write(j->sender_fd, j->msg, strlen(j->msg));
                     }
                 }
-                if (j->flag == 2 &&client[i] != j->sender_fd)
+                if (j->flag == 2 && (client[i] != j->sender_fd))
                 {
+                    printf("SEND TO ALMOST EVERYONE\n");
                     write(client[i], j->msg, strlen(j->msg));
                 }
                 if (j->flag == 0)
                 {
-                    printf("SEND TO EVERYONE");
+                    printf("SEND TO EVERYONE\n");
                     write(client[i], j->msg, strlen(j->msg));
                 }
             }
@@ -370,9 +371,9 @@ int main(int argc, char **argv) {
                     snprintf(buf, sizeof(buf), "Let's start chatting, %s!\n", client_names[i]);
                     write(sockfd, buf, sizeof(buf));
                     bzero(buf, sizeof(buf));
-                    snprintf(buf, sizeof(buf), "%s joined the chat.\n", client_names[i]);
+                    snprintf(buf, sizeof(buf), "%s joined the chat.\n\0", client_names[i]);
                     memcpy(client_buff[i], buf, n+20);
-                    n = n+20;
+                    n = strlen(client_buff[i]);
                     tmp_flag1 = 2;
                 }
                 else
@@ -391,6 +392,7 @@ int main(int argc, char **argv) {
                     nj->flag = tmp_flag1;
                     bzero(client_buff[i], sizeof(client_buff[i]));
                     q_push(&job_queue, nj);
+                    printf("PUSHED TO JOB QUEUE\n");
                 }
 				if (--nready <= 0)
                     printf("4\n");
