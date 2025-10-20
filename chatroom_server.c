@@ -405,7 +405,7 @@ int main(int argc, char **argv) {
 				maxi = i;				/* max index in client[] array */
             bzero(buf, sizeof(buf));
             snprintf(buf, sizeof(buf), "Welcome to Chatroom! Please enter your username:\n");
-            write(connfd, buf, sizeof(buf));
+            write(connfd, buf, strlen(buf));
             bzero(buf, sizeof(buf));
 			if (--nready <= 0)
             {
@@ -498,18 +498,32 @@ int main(int argc, char **argv) {
                     buf[n] = '\0';
                     size_t len = strlen(client_buff[i]);
                     memcpy(client_buff[i]+len, buf, n+1);
-                }
-                if (buf[n-1] == '\n')
-                {
-                    Job * nj = calloc(1, sizeof(Job));
-                    nj->sender_fd = sockfd;
-                    memcpy(nj->username, client_names[i], strlen(client_names[i])+1);
-                    memcpy(nj->msg, client_buff[i], strlen(client_buff[i])+1);
-                    nj->next = NULL;
-                    nj->flag = tmp_flag1;
-                    bzero(client_buff[i], sizeof(client_buff[i]));
-                    q_push(&job_queue, nj);
-                    printf("PUSHED TO JOB QUEUE\n");
+                    int last = -1;
+                    char tmp[MAX_MSG] = "";
+                    for (int c = 0; c < len+n+1; c++)
+                    {
+                        printf("C: %d, char: %c", c, client_buff[i][c]);
+                        if (client_buff[i][c] == '\n')
+                        {
+                            printf("FOUND: %d", c);
+                            Job * nj = calloc(1, sizeof(Job));
+                            nj->sender_fd = sockfd;
+                            memcpy(nj->username, client_names[i], strlen(client_names[i])+1);
+                            memcpy(nj->msg, client_buff[i]+last+1, c-last);
+                            nj->msg[c-last] = '\0';
+                            nj->next = NULL;
+                            nj->flag = tmp_flag1;
+                            bzero(client_buff[i], sizeof(client_buff[i]));
+                            q_push(&job_queue, nj);
+                            printf("PUSHED TO JOB QUEUE\n");
+                            last = c;
+                            memcpy(tmp, client_buff[i]+last, len+n+2-last);
+                        }
+                    }
+                    if (tmp[0] != '\0')
+                    {
+                        memcpy(client_buff[i], tmp, strlen(tmp)+1);
+                    }
                 }
 				if (--nready <= 0)
                     printf("4\n");
