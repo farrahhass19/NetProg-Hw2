@@ -431,11 +431,11 @@ int main(int argc, char **argv) {
                     bzero(client_buff[i], sizeof(client_buff[i]));
                     buf[n-1] = '\0'; //get rid of newline
 
-                    bool bad_name = False;
+                    bool bad_name = false;
                     // check if usernamer is valid
-                    for (int i = 0; str[i] != '\0'; i++) {
-                        if (!isalnum(str[i]) && str[i] != '_') {
-                            bad_name = True;
+                    for (int i = 0; buf[i] != '\0'; i++) {
+                        if (!isalnum(buf[i]) && buf[i] != '_') {
+                            bad_name = true;
                         }
                     }
 
