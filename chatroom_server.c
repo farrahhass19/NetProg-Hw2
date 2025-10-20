@@ -400,7 +400,7 @@ int main(int argc, char **argv) {
 			if (i > maxi)
 				maxi = i;				/* max index in client[] array */
             bzero(buf, sizeof(buf));
-            snprintf(buf, sizeof(buf), "Welcome to Chatroom! Please enter your username: \n");
+            snprintf(buf, sizeof(buf), "Welcome to Chatroom! Please enter your username:\n");
             write(connfd, buf, sizeof(buf));
             bzero(buf, sizeof(buf));
 			if (--nready <= 0)
@@ -430,6 +430,15 @@ int main(int argc, char **argv) {
                     bzero(client_names[i], sizeof(client_names[i]));
                     bzero(client_buff[i], sizeof(client_buff[i]));
                     buf[n-1] = '\0'; //get rid of newline
+
+                    bool bad_name = False;
+                    // check if usernamer is valid
+                    for (int i = 0; str[i] != '\0'; i++) {
+                        if (!isalnum(str[i]) && str[i] != '_') {
+                            bad_name = True;
+                        }
+                    }
+
                     //check if username is already taken
                     bool name_taken = false;
                     for (int j = 0; j <= maxi; j++) {
@@ -443,7 +452,14 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    if(name_taken)
+                    if (bad_name)
+                    {
+                        // If the username is already taken prompt for another username
+                        char tmp_msg[MAX_MSG];
+                        snprintf(tmp_msg, sizeof(tmp_msg), "Username \"%s\" is invalid. Try another:\n", buf);
+                        write(sockfd, tmp_msg, strlen(tmp_msg));
+                    }
+                    else if(name_taken)
                     {
                         // If the username is already taken prompt for another username
                         char tmp_msg[MAX_MSG];
