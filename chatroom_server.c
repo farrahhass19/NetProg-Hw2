@@ -34,6 +34,10 @@
 #define MAX_CLIENTS  64
 #define INBUF        2048
 
+int maxfd, maxi, num_workers, max_clients, listenfd;
+int *client;
+pthread_t *tids;
+
 /* ---------------- Data Structures ---------------- */
 
 typedef struct Job {
@@ -181,35 +185,27 @@ struct Message {
 
 void cleanup_and_exit(int sig) {
     printf("\nReceived signal %d, cleaning up...\n", sig);
-    
-    int client_size = 5;
-    int client[5];
-    int listenfd;
-    int maxi = -1;
-    struct Message* head = NULL;
-    
-    // Close all client connections
+
     for (int i = 0; i <= maxi; i++) {
         if (client[i] >= 0) {
             close(client[i]);
         }
     }
-    
-    // Close listening socket
+
     if (listenfd >= 0) {
         close(listenfd);
     }
-    
-    // Free message list
-    struct Message* current = head;
-    while (current != NULL) {
-        struct Message* next = current->next;
-        if (current->data != NULL) {
-            free(current->data);
-        }
-        free(current);
-        current = next;
+
+    for (int i = 0; i < num_workers; i++) {
+        pthread_join(tids[i], NULL);
     }
+    
+    // Free message lists
+    q_close(&job_queue);
+    q_close(&bcast_queue);
+
+    free(client);
+    free(tids);
     
     printf("Cleanup complete. Exiting.\n");
     exit(0);
@@ -234,10 +230,12 @@ int main(int argc, char **argv) {
         exit(1);
     }
     int port = atoi(argv[1]);
-    int num_workers = atoi(argv[2]);
-    int max_clients = atoi(argv[3]);
+    num_workers = atoi(argv[2]);
+    max_clients = atoi(argv[3]);
+
+    client = calloc(max_clients,sizeof(int));
     
-    int listenfd = socket(AF_INET, SOCK_STREAM, 0);
+    listenfd = socket(AF_INET, SOCK_STREAM, 0);
 
     struct sockaddr_in servaddr, cliaddr;
     bzero(&servaddr, sizeof(servaddr));
@@ -247,10 +245,9 @@ int main(int argc, char **argv) {
     bind(listenfd, (struct sockaddr *)&servaddr, sizeof(servaddr));
     listen(listenfd, MAX_CLIENTS);
 
-    int maxfd, maxi;
-    int client[max_clients];
     char client_buff[max_clients][INBUF]; // TODO: change this and below to dynamically allocate memory when needed for space saving
     char client_names[max_clients][MAX_NAME];
+
     int i;
     char buf[MAX_MSG+1];
     fd_set	rset, allset;
@@ -265,7 +262,7 @@ int main(int argc, char **argv) {
     q_init(&bcast_queue);
 
     // pthread_t tids[num_workers];
-    pthread_t *tids = malloc(num_workers * sizeof(pthread_t));
+    tids = malloc(num_workers * sizeof(pthread_t));
     thread_arg targ;
     targ.job_queue = &job_queue;
     targ.bcast_queue = &bcast_queue;
