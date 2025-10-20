@@ -295,6 +295,10 @@ int main(int argc, char **argv) {
             printf("\nAFTER POP\n");
             for (i = 0; i <= maxi; i++)
             {
+                if (client_names[i][0] == '\0')
+                {
+                    continue;
+                }
                 if (j->flag == 1 && (client[i] == j->sender_fd))
                 {
                     if (j->msg[0] == '\0')
